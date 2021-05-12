@@ -1,0 +1,203 @@
+---
+title: "COP21 Datapack App analytics"
+output:
+  pdf_document: default
+html_document:
+  df_print: paged
+lang: "en-US"
+date: '`r format(Sys.time(), "%d %B, %Y %H:%M")`'
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(data.table)
+require(magrittr)
+require(purrr)
+require(dplyr)
+require(tidyr)
+require(knitr)
+require(ggplot2)
+require(paws)
+
+Sys.setlocale("LC_MESSAGES", 'en_GB.UTF-8')
+Sys.setenv(LANG = "en_US.UTF-8")
+
+s3<-paws::s3()
+s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop21/") 
+files_on_s3<-s3_files$Contents %>% map(.,function(x) x$Key) %>% unlist()
+
+tmpdir<-tempdir()
+dir.create(paste0(tmpdir,"/","app_analytics"))
+dir.create(paste0(tmpdir,"/","app_analytics/cop21"))
+
+  for ( i in 1:length(files_on_s3) ) {
+  print(paste("Getting",files_on_s3[i]))
+  s3_download<-s3$get_object( Bucket=Sys.getenv("AWS_S3_BUCKET"),
+                 Key = files_on_s3[i])
+  s3_download_body <- s3_download$Body
+  # Write output to file
+file_name2 <- paste0(tmpdir,"/",files_on_s3[i])
+writeBin(s3_download_body, con = file_name2)
+
+}
+
+
+read_plus <- function(flnm) {
+  fread(flnm) %>% 
+    mutate(filename = flnm)
+}
+
+file_prefix<-paste0(tmpdir,"/app_analytics/cop21/")
+d <- list.files(path = file_prefix,pattern = "*.csv",full.names = TRUE) %>% 
+  map_df(~read_plus(.)) %>% 
+  dplyr::mutate(`filename` = stringr::str_replace(filename,file_prefix,"")) %>% 
+  tidyr::separate(`filename`,into=c("sanename","date","time"),sep="_") %>% 
+  mutate(time=stringr::str_remove(time,"\\.csv$")) %>% 
+  mutate(timestamp = lubridate::parse_date_time(paste(date,time),"ymd HMS")) %>% 
+  dplyr::select(-date,-time)
+```
+
+
+## Summary info
+```{r echo=FALSE}
+
+total_validations<-d %>% 
+  dplyr::select(country_name,timestamp) %>% 
+  dplyr::distinct() %>% 
+  NROW()
+start_date<-as.Date(min(d$timestamp))
+end_date<-as.Date(max(d$timestamp))
+```
+
+
+- Total validations: `r total_validations`
+- First validation on: `r start_date`
+- Last validation on: `r end_date`
+
+## Validations by country
+
+
+```{r eval=TRUE, echo=FALSE}
+validations_by_country_total<-
+d %>% 
+  dplyr::select(Country=country_name,timestamp) %>% 
+  dplyr::distinct() %>% 
+  dplyr::group_by(Country) %>% 
+  dplyr::summarise(Validations=n()) %>% 
+  dplyr::arrange(-Validations)
+
+kable(validations_by_country_total)
+```
+
+## Validations by day
+
+```{r eval=TRUE, echo=FALSE}
+
+#Validations by date
+validations_by_date_total<-
+d %>% 
+  dplyr::select(country_name,timestamp) %>% 
+  dplyr::distinct() %>% 
+  dplyr::mutate(Date=as.Date(timestamp)) %>% 
+  dplyr::select(Date) %>% 
+  dplyr::group_by(Date) %>% 
+  dplyr::summarise(Validations = dplyr::n())
+
+ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col()
+
+
+```
+
+
+## Validation issues
+
+```{r eval=TRUE, echo=FALSE}
+#Issue summary
+
+issue_summary<-d %>% dplyr::select(country_name,timestamp,validation_issue_category) %>% 
+  dplyr::distinct() %>%
+  dplyr::group_by(validation_issue_category) %>% 
+  dplyr::summarise(count=dplyr::n()) %>% 
+  dplyr::arrange(-count) %>% 
+  dplyr::mutate(occurrence_rate = ( (100*count/total_validations) %>% round(.,digits = 1)  ) ) %>% 
+  dplyr::select(-count) %>% 
+  dplyr::rename(Category = validation_issue_category,
+                "Occurrence (%)" = occurrence_rate)
+
+
+kable(issue_summary)
+``` 
+
+
+```{r eval=TRUE, echo=FALSE}
+require(connectapi)
+require(lubridate)
+
+days_back <- as.numeric(Sys.getenv("DAYSBACK", 30))
+
+default_content_title <- "Unknown (Deleted Content?)"
+
+report_from <- lubridate::today() - lubridate::ddays(days_back)
+
+client <- connectapi::connect()
+shiny <- get_usage_shiny(
+  client,
+  from = report_from,
+  limit = Inf
+) %>%
+  mutate(
+    started = lubridate::ymd_hms(started),
+    ended = lubridate::ymd_hms(ended),
+    session_duration = ended - started
+    ) %>%
+  filter(session_duration > lubridate::dseconds(5))
+
+content <- get_usage_static(
+  client,
+  from = report_from,
+  limit = Inf
+)
+
+all_users <- get_users(client, page_size = 500)
+
+data <-   list(shiny = shiny, content = content)
+```
+
+
+## Connect server stats
+```{r shiny_over_time, eval=TRUE, echo=FALSE}
+data$shiny %>%
+    mutate(day = round_date(started, "day")) %>% 
+    group_by(day) %>% 
+    filter(day > today() - ddays(days_back)) %>% 
+    summarise(visits = n()) %>% 
+    arrange(desc(visits)) %>% 
+    {ggplot(., aes(day, visits)) + 
+            geom_bar(stat = "identity") + 
+            labs(
+                y = "# of Shiny Sessions",
+                x = NULL
+            )}
+```
+
+
+## Datapack sessions by day
+```{r datapack_over_time, eval=TRUE, echo=FALSE}
+data$shiny %>% 
+      mutate(time = ymd_hms(started),
+          day = round_date(started, "day")) %>% 
+  dplyr::select(content_guid,time,day) %>% 
+  group_by(content_guid,day) %>% 
+  summarize(visits = n()) %>% 
+  arrange(content_guid,desc(visits)) %>% 
+  mutate(name = purrr::map_chr(content_guid, ~ content_title(client, .x, default_content_title))) %>% 
+  dplyr::filter(name == "Datapack") %>% 
+  {  ggplot(., aes(day, visits)) + 
+     geom_bar(stat = "identity") +  
+     labs(
+       y = "# of Datapack sessions by day",
+       x = "Date"
+     )} 
