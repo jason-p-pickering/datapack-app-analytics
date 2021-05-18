@@ -1,5 +1,5 @@
 ---
-title: "COP21 Datapack App analytics"
+title: "COP21 Datapack App Analytics"
 output:
   pdf_document: default
 html_document:
@@ -21,6 +21,8 @@ require(tidyr)
 require(knitr)
 require(ggplot2)
 require(paws)
+require(connectapi)
+require(lubridate)
 
 Sys.setlocale("LC_MESSAGES", 'en_GB.UTF-8')
 Sys.setenv(LANG = "en_US.UTF-8")
@@ -62,7 +64,7 @@ d <- list.files(path = file_prefix,pattern = "*.csv",full.names = TRUE) %>%
 
 
 ## Summary info
-```{r echo=FALSE}
+```{r summary_info, eval=TRUE, echo=FALSE}
 
 total_validations<-d %>% 
   dplyr::select(country_name,timestamp) %>% 
@@ -80,7 +82,7 @@ end_date<-as.Date(max(d$timestamp))
 ## Validations by country
 
 
-```{r eval=TRUE, echo=FALSE}
+```{r validations_by_country, eval=TRUE, echo=FALSE}
 validations_by_country_total<-
 d %>% 
   dplyr::select(Country=country_name,timestamp) %>% 
@@ -94,7 +96,7 @@ kable(validations_by_country_total)
 
 ## Validations by day
 
-```{r eval=TRUE, echo=FALSE}
+```{r validations_by_date, eval=TRUE, echo=FALSE}
 
 #Validations by date
 validations_by_date_total<-
@@ -114,7 +116,7 @@ ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col()
 
 ## Validation issues
 
-```{r eval=TRUE, echo=FALSE}
+```{r issue_summary, eval=TRUE, echo=FALSE}
 #Issue summary
 
 issue_summary<-d %>% dplyr::select(country_name,timestamp,validation_issue_category) %>% 
@@ -132,9 +134,8 @@ kable(issue_summary)
 ``` 
 
 
-```{r eval=TRUE, echo=FALSE}
-require(connectapi)
-require(lubridate)
+```{r shiny_load_data, eval=TRUE, echo=FALSE}
+
 
 days_back <- as.numeric(Sys.getenv("DAYSBACK", 30))
 
@@ -194,7 +195,7 @@ data$shiny %>%
   summarize(visits = n()) %>% 
   arrange(content_guid,desc(visits)) %>% 
   mutate(name = purrr::map_chr(content_guid, ~ content_title(client, .x, default_content_title))) %>% 
-  dplyr::filter(name == "Datapack") %>% 
+  dplyr::filter(name == Sys.getenv("APP_NAME")) %>% 
   {  ggplot(., aes(day, visits)) + 
      geom_bar(stat = "identity") +  
      labs(
