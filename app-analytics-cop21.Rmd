@@ -23,55 +23,38 @@ require(ggplot2)
 require(paws)
 require(connectapi)
 require(lubridate)
+require(noctua)
+
+#Connect to the Athena database
+con <- dbConnect(noctua::athena())
+
 
 Sys.setlocale("LC_MESSAGES", 'en_GB.UTF-8')
 Sys.setenv(LANG = "en_US.UTF-8")
 
-s3<-paws::s3()
-s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop21/") 
-files_on_s3<-s3_files$Contents %>% map(.,function(x) x$Key) %>% unlist()
-
-tmpdir<-tempdir()
-dir.create(paste0(tmpdir,"/","app_analytics"))
-dir.create(paste0(tmpdir,"/","app_analytics/cop21"))
-
-  for ( i in 1:length(files_on_s3) ) {
-  print(paste("Getting",files_on_s3[i]))
-  s3_download<-s3$get_object( Bucket=Sys.getenv("AWS_S3_BUCKET"),
-                 Key = files_on_s3[i])
-  s3_download_body <- s3_download$Body
-  # Write output to file
-file_name2 <- paste0(tmpdir,"/",files_on_s3[i])
-writeBin(s3_download_body, con = file_name2)
-
-}
-
-
-read_plus <- function(flnm) {
-  fread(flnm) %>% 
-    mutate(filename = flnm)
-}
-
-file_prefix<-paste0(tmpdir,"/app_analytics/cop21/")
-d <- list.files(path = file_prefix,pattern = "*.csv",full.names = TRUE) %>% 
-  map_df(~read_plus(.)) %>% 
-  dplyr::mutate(`filename` = stringr::str_replace(filename,file_prefix,"")) %>% 
-  tidyr::separate(`filename`,into=c("sanename","date","time"),sep="_") %>% 
-  mutate(time=stringr::str_remove(time,"\\.csv$")) %>% 
-  mutate(timestamp = lubridate::parse_date_time(paste(date,time),"ymd HMS")) %>% 
-  dplyr::select(-date,-time)
 ```
 
 
 ## Summary info
 ```{r summary_info, eval=TRUE, echo=FALSE}
 
-total_validations<-d %>% 
-  dplyr::select(country_name,timestamp) %>% 
-  dplyr::distinct() %>% 
-  NROW()
-start_date<-as.Date(min(d$timestamp))
-end_date<-as.Date(max(d$timestamp))
+
+d_validation_details <- dbGetQuery(con,"SELECT country_name,validation_issue_category, event_date,
+SUM(count) as count FROM (
+SELECT country_name,validation_issue_category,
+CAST(date_parse(ts, '%Y-%m-%d %T') as date) as event_date,
+count
+FROM datapackr.app_analytics_new
+)
+GROUP BY country_name,validation_issue_category,event_date
+ORDER BY event_date,country_name;")
+
+d_validation_runs <- dbGetQuery(con,"SELECT  DISTINCT country_name,CAST(date_parse(ts, '%Y-%m-%d %T') as date) as event_date,
+                                uuid FROM datapackr.app_analytics_new")
+
+total_validations<-nrow(d_validation_runs)
+start_date<-min(d_validation_runs$event_date)
+end_date<-max(d_validation_runs$event_date)
 ```
 
 
@@ -84,9 +67,8 @@ end_date<-as.Date(max(d$timestamp))
 
 ```{r validations_by_country, eval=TRUE, echo=FALSE}
 validations_by_country_total<-
-d %>% 
-  dplyr::select(Country=country_name,timestamp) %>% 
-  dplyr::distinct() %>% 
+d_validation_runs %>% 
+  dplyr::select(Country=country_name,event_date) %>% 
   dplyr::group_by(Country) %>% 
   dplyr::summarise(Validations=n()) %>% 
   dplyr::arrange(-Validations)
@@ -100,11 +82,8 @@ kable(validations_by_country_total)
 
 #Validations by date
 validations_by_date_total<-
-d %>% 
-  dplyr::select(country_name,timestamp) %>% 
-  dplyr::distinct() %>% 
-  dplyr::mutate(Date=as.Date(timestamp)) %>% 
-  dplyr::select(Date) %>% 
+d_validation_runs %>% 
+  dplyr::select(Date=event_date) %>% 
   dplyr::group_by(Date) %>% 
   dplyr::summarise(Validations = dplyr::n())
 
@@ -119,8 +98,8 @@ ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col()
 ```{r issue_summary, eval=TRUE, echo=FALSE}
 #Issue summary
 
-issue_summary<-d %>% dplyr::select(country_name,timestamp,validation_issue_category) %>% 
-  dplyr::distinct() %>%
+issue_summary<-d_validation_details%>% 
+  dplyr::select(country_name,event_date,validation_issue_category) %>% 
   dplyr::group_by(validation_issue_category) %>% 
   dplyr::summarise(count=dplyr::n()) %>% 
   dplyr::arrange(-count) %>% 
@@ -137,7 +116,7 @@ kable(issue_summary)
 ```{r shiny_load_data, eval=TRUE, echo=FALSE}
 
 
-days_back <- as.numeric(Sys.getenv("DAYSBACK", 30))
+days_back <- as.numeric(Sys.getenv("DAYSBACK", 365))
 
 default_content_title <- "Unknown (Deleted Content?)"
 
@@ -186,7 +165,7 @@ data$shiny %>%
 
 
 ## Datapack sessions by day
-```{r datapack_over_time, eval=TRUE, echo=FALSE}
+```{r datapack_over_time, eval=FALSE, echo=FALSE}
 data$shiny %>% 
       mutate(time = ymd_hms(started),
           day = round_date(started, "day")) %>% 
