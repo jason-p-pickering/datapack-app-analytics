@@ -31,12 +31,32 @@ s3<-paws::s3()
 s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop21/") 
 files_on_s3<-s3_files$Contents %>% map(.,function(x) x$Key) %>% unlist()
 
+
+is_truncated <- s3_files$IsTruncated
+coninutation_token <- s3_files$NextContinuationToken
+
+#Get all of the files
+
+while(is_truncated) {
+  s3_files_next <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop21/",ContinuationToken = coninutation_token)
+  is_truncated <- s3_files_next$IsTruncated
+  coninutation_token <- s3_files_next$NextContinuationToken
+  
+  files_next<-s3_files_next$Contents %>% map(.,function(x) x$Key) %>% unlist()
+  
+  files_on_s3 <- append(files_on_s3,files_next)
+  is_truncated <- s3_files_next$IsTruncated
+}
+
+
+print(paste("Found",length(files_on_s3),"files on S3"))
+
 tmpdir<-tempdir()
 dir.create(paste0(tmpdir,"/","app_analytics"))
 dir.create(paste0(tmpdir,"/","app_analytics/cop21"))
 
-  for ( i in 1:length(files_on_s3) ) {
-  print(paste("Getting",files_on_s3[i]))
+for ( i in 1:length(files_on_s3) ) {
+  print(paste("Getting",i,"of",length(files_on_s3),"files."))
   s3_download<-s3$get_object( Bucket=Sys.getenv("AWS_S3_BUCKET"),
                  Key = files_on_s3[i])
   s3_download_body <- s3_download$Body
@@ -137,7 +157,7 @@ kable(issue_summary)
 ```{r shiny_load_data, eval=TRUE, echo=FALSE}
 
 
-days_back <- as.numeric(Sys.getenv("DAYSBACK", 30))
+days_back <- as.numeric(Sys.getenv("DAYSBACK", 90))
 
 default_content_title <- "Unknown (Deleted Content?)"
 
@@ -186,7 +206,7 @@ data$shiny %>%
 
 
 ## Datapack sessions by day
-```{r datapack_over_time, eval=TRUE, echo=FALSE}
+```{r datapack_over_time, eval=FALSE, echo=FALSE}
 data$shiny %>% 
       mutate(time = ymd_hms(started),
           day = round_date(started, "day")) %>% 
