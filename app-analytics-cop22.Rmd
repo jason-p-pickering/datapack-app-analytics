@@ -162,7 +162,7 @@ coninutation_token <- s3_files$NextContinuationToken
 
 #Get all of the files
 while(is_truncated) {
-  s3_files_next <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop21/",ContinuationToken = coninutation_token)
+  s3_files_next <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop22/",ContinuationToken = coninutation_token)
   is_truncated <- s3_files_next$IsTruncated
   coninutation_token <- s3_files_next$NextContinuationToken
   
