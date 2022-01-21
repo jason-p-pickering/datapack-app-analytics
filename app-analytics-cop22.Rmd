@@ -25,6 +25,11 @@ require(connectapi)
 require(lubridate)
 require(noctua)
 
+#Set the AWS_ATHENA_S3_STAGING_DIR
+ssm<-paws::ssm()
+athena_staging_dir <- paste0("s3://",ssm$get_parameter(Name = "BucketProcessed")$Parameter$Value,"/datapack/temp/")
+Sys.setenv(AWS_ATHENA_S3_STAGING_DIR = athena_staging_dir )
+
 #Connect to the Athena database
 con <- dbConnect(noctua::athena())
 
