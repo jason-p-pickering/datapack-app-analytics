@@ -24,6 +24,7 @@ require(paws)
 require(connectapi)
 require(lubridate)
 require(noctua)
+require(kableExtra)
 
 #Set the AWS_ATHENA_S3_STAGING_DIR
 ssm<-paws::ssm()
@@ -58,29 +59,72 @@ events_type_map <- tibble::tribble(
   "CSO_FLATPACK_DOWNLOAD","CSO Flatpack",
   "MEMO_DOWNLOAD","COP Memo",
   "LOGIN","Login",
-  "LOGIN_FAILED","Login failed"
-  
+  "LOGIN_FAILED","Login failed",
+  "MISSING_PSNUXIM_DOWNLOAD", "Missing PSNUxIM targets",
+  "PAW_EXPORT", "PAW Export",
+  "APPEND_PSNUXIM_DOWNLOAD", "Append missing targets",
+  "UPDATED_TARGETS_DOWNLOAD", "Update PSNUxIM Targets"
 )
+
+
+
+# url <- paste0(d2_session$base_url,"api/users?paging=false&fields=userCredentials[username],userGroups[name]&filter=userCredentials.disabled:eq:false")
+# r <-httr::GET(url,content_type_json(),handle=d2_session$handle) %>% 
+#   httr::content(.,"text") %>% 
+#   jsonlite::fromJSON()
+# 
+# uzers <- unlist(lapply(r$users$userCredentials$username, function(x) digest(x,"md5",serialize=FALSE)))
+# has_validated <- uzers %in% d_events$user
+# 
+# uzers <- uzers[has_validated]
+# ugs<- r$users$userGroups[has_validated]
+# rm(r)
+# 
+# is_systems <-  unlist(lapply(ugs, function(x) any(stringr::str_detect(x$name,"Data PRIME Systems access"))))
+# is_global <-  unlist(lapply(ugs, function(x) any(stringr::str_detect(x$name,"Global users"))))
+# is_ou_agency <- unlist(lapply(ugs, function(x) any(stringr::str_detect(x$name,"^OU .+ Agency"))))
+# is_interagency <- unlist(lapply(ugs, function(x) any(stringr::str_detect(x$name,"^OU .+ Interagency"))))
+# is_partner <- unlist(lapply(ugs, function(x) any(stringr::str_detect(x$name,"^OU .+ Partner"))))
+# 
+# user_type <- data.frame(user=uzers,is_systems = is_systems,is_global=is_global,is_ou_agency=is_ou_agency,is_interagency = is_interagency,is_partner=is_partner)
+# 
+# user_type %<>% dplyr::mutate(user_type = dplyr::case_when(is_systems ~ "Systems",
+#                                                          is_global & ! is_systems  ~ "Global",
+#                                                          is_ou_agency ~ "Agency (OU)",
+#                                                          is_interagency ~ "Interagency",
+#                                                          TRUE ~ "Unknown")) %>% 
+# dplyr::select(user,user_type)
+# 
+# d_events <- d_events %>% dplyr::inner_join(user_type)
 
 start_date<-min(d_events$event_date)
 end_date<-max(d_events$event_date)
-
 d_events <- d_events %>%  dplyr::left_join(events_type_map)
 
 validations <- d_events %>%  dplyr::filter(event_type == "VALIDATE") 
 
 downloads <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"DOWNLOAD"))
 
-logins <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"LOGIN"))
+logins <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"LOGIN")) %>% 
+  dplyr::select(event_type, uuid, event_date) %>% 
+  dplyr::left_join( {
+    validations %>% 
+      dplyr::select(tool, datapack_name, cop_year, uuid)
+  }, by = c("uuid")) %>% 
+  dplyr::mutate( tool = ifelse(is.na(tool),  "Unknown", tool),
+                 datapack_name = ifelse(is.na(datapack_name), "Uknown", datapack_name),
+                 cop_year = ifelse(is.na(cop_year), "Unknown", cop_year)) %>% 
+  dplyr::arrange(cop_year, event_date)
 
 ```
+
 
 
 - Total validations: `r NROW(validations)`
 - Total downloads: `r NROW(downloads)`
 - Unique users: `r length(unique(d_events$user))`
-- Logins: `r dplyr::filter(logins, event_type == "LOGIN") %>% nrow()`
-- Failed logns: `r dplyr::filter(logins, event_type == "LOGIN_FAILED") %>% nrow()`
+- Logins: `r NROW(logins)`
+- Failed logins: `r dplyr::filter(d_events, event_type == "LOGIN_FAILED") %>% nrow()`
 - Report period: `r start_date` to  `r end_date`
 
 ## Validations by country
@@ -88,12 +132,24 @@ logins <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"LOGIN"))
 ```{r validations_by_country, eval=TRUE, echo=FALSE, message=FALSE}
 validations_by_country_total<-
 validations %>% 
-  dplyr::select(Country=datapack_name,Type = message) %>% 
-  dplyr::group_by(Country,Type) %>% 
-  dplyr::summarise(n=n()) %>% 
-  tidyr::pivot_wider(names_from=Type,values_from =n,values_fill = 0 )
+  dplyr::select(Country=datapack_name, cop_year) %>%
+  dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+  dplyr::group_by(Country, cop_year ) %>% 
+  dplyr::summarise(Validations=dplyr::n(), .groups = "drop") %>% 
+  dplyr::arrange(cop_year, Country) %>% 
+  tidyr::pivot_wider(names_from=cop_year,values_from = Validations,values_fill = 0 )
 
-kable(validations_by_country_total)
+#https://stackoverflow.com/questions/36067598/r-print-table-with-columns-sums-below
+func <- function(z) if (is.numeric(z)) sum(z) else '' 
+sumrow <- as.data.frame(lapply(validations_by_country_total, func))
+sumrow[1] <- "Total"
+names(sumrow) <- names(validations_by_country_total)
+validations_by_country_total <- rbind(validations_by_country_total, sumrow)
+
+
+knitr::kable(validations_by_country_total, booktabs = TRUE) %>% 
+    kable_styling(bootstrap_options = c("striped", "condensed")) %>%
+  row_spec(dim(validations_by_country_total)[1], bold = T) 
 ```
 
 ## Validations by day
@@ -103,11 +159,12 @@ kable(validations_by_country_total)
 #Validations by date
 validations_by_date_total<-
 validations %>% 
-  dplyr::select(Date=event_date) %>% 
-  dplyr::group_by(Date) %>% 
+  dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+  dplyr::select(Date=event_date, cop_year) %>% 
+  dplyr::group_by(Date, cop_year) %>% 
   dplyr::summarise(Validations = dplyr::n())
 
-ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col()
+ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col() + facet_grid(cop_year ~ .) 
 
 
 ```
@@ -120,11 +177,13 @@ ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col()
 #Validations by date
 downloads_by_day_type<-
 downloads %>% 
-  dplyr::select(Date=event_date,Type = message) %>% 
-  dplyr::group_by(Date,Type,) %>% 
+  dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+  dplyr::select(Date=event_date,Type = message, Year = cop_year) %>%
+  dplyr::mutate(Week = lubridate::isoweek(Date)) %>% 
+  dplyr::group_by(Type,Week, Year) %>% 
   dplyr::summarise(Downloads = dplyr::n())
 
-ggplot(downloads_by_day_type,aes(x = Date, y= Downloads, fill=Type)) + geom_bar(position="stack", stat="identity")
+ggplot(downloads_by_day_type,aes(x = Week, y= Downloads, fill=Type)) + geom_bar(position="stack", stat="identity") + facet_grid(Year ~ .) 
 
 
 ```
@@ -133,10 +192,11 @@ ggplot(downloads_by_day_type,aes(x = Date, y= Downloads, fill=Type)) + geom_bar(
 
 ```{r new_users, eval=TRUE, echo=FALSE, message=FALSE}
 new_users <- d_events %>%
+    dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
   dplyr::select(user,event_date) %>% 
   dplyr::group_by(user) %>%
   dplyr::arrange(event_date) %>%
-  dplyr::filter(row_number()==1) %>% 
+  dplyr::filter(dplyr::row_number()==1) %>% 
   dplyr::ungroup() %>% 
   dplyr::mutate(val=1) %>% 
   dplyr::select(event_date,val) %>% 
@@ -150,19 +210,25 @@ new_users <- d_events %>%
 
 ## Validation issues summary
 
+The following table displays the summary of issues of the latest Target Setting Tool which was validated for a specific country or operating unit. Results are then 
+aggregated across all operating units and the resulting percentage of issues which are common to all of the most recent submissions is shown. 
+
 ```{r issue_summary, eval=TRUE, echo=FALSE, }
 
 #We need to swtich regions
 Sys.setenv(AWS_REGION = "us-east-2")
 s3<-paws::s3()
-s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="validation_error_summary/cop22/") 
+s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="validation_error_summary/cop23/") 
 files_on_s3<-s3_files$Contents %>% map(.,function(x) x$Key) %>% unlist()
 is_truncated <- s3_files$IsTruncated
 coninutation_token <- s3_files$NextContinuationToken
 
 #Get all of the files
 while(is_truncated) {
-  s3_files_next <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="app_analytics/cop22/",ContinuationToken = coninutation_token)
+  s3_files_next <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),
+                                      Prefix="validation_error_summary/cop23/",
+                                      ContinuationToken = coninutation_token,
+                                      StartAfter = files_on_s3[length(files_on_s3)])
   is_truncated <- s3_files_next$IsTruncated
   coninutation_token <- s3_files_next$NextContinuationToken
   
@@ -174,7 +240,7 @@ while(is_truncated) {
 
 
 files_df <- stringr::str_split(files_on_s3,"_") %>% do.call("rbind.data.frame",.)
-countries <- files_df[,3] %>% stringr::str_remove("summary/cop22/")
+countries <- files_df[,3] %>% stringr::str_remove("summary/cop23/")
 dates <- files_df[,4]
 times  <- files_df[,5] %>%  stringr::str_remove(".csv")
 
@@ -190,8 +256,8 @@ files_to_get <- files_df %>% group_by(country) %>%
   dplyr::pull(filename)
 
 tmpdir<-tempdir()
-dir.create(paste0(tmpdir,"/","validation_error_summary"))
-dir.create(paste0(tmpdir,"/","validation_error_summary/cop22"))
+dir.create(paste0(tmpdir,"/","validation_error_summary"),)
+dir.create(paste0(tmpdir,"/","validation_error_summary/cop23"))
 
 for ( i in 1:length(files_to_get) ) {
 
@@ -204,11 +270,11 @@ writeBin(s3_download_body, con = file_name2)
 }
 
 read_plus <- function(flnm) {
-  fread(flnm) %>% 
+  data.table::fread(flnm) %>% 
     mutate(filename = flnm)
 }
 
-file_prefix<-paste0(tmpdir,"/validation_error_summary/cop22/")
+file_prefix<-paste0(tmpdir,"/validation_error_summary/cop23/")
 
 d <- list.files(path = file_prefix,pattern = "*.csv",full.names = TRUE) %>% 
   map_df(~read_plus(.)) %>% 
@@ -217,9 +283,6 @@ d <- list.files(path = file_prefix,pattern = "*.csv",full.names = TRUE) %>%
   mutate(time=stringr::str_remove(time,"\\.csv$")) %>% 
   mutate(timestamp = lubridate::parse_date_time(paste(date,time),"ymd HMS")) %>% 
   dplyr::select(-date,-time)
-
-
-
 
 
 issue_summary<-d %>%
@@ -233,7 +296,9 @@ issue_summary<-d %>%
                 "Occurrence (%)" = occurrence_rate)
 
 
-kable(issue_summary)
+
+kable(issue_summary,caption=paste("Validation summary ( n =",length(unique(d$uuid)),")"))
+
 ```
 
 <!-- ```{r shiny_load_data, eval=FALSE, echo=FALSE} -->
