@@ -1,3 +1,8 @@
+---
+title: "COP24 TST App Analytics"
+lang: "en-US"
+date: '`r format(Sys.time(), "%d %B, %Y %H:%M")`'
+---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -114,11 +119,11 @@ logins <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"LOGIN")) %>
 - Total validations: 
     - COP22: `r validations %>% dplyr::filter(cop_year == 2022) %>% NROW(.)`
     - COP23: `r validations %>% dplyr::filter(cop_year == 2023) %>% NROW(.)`
-    - COO24: `r validations %>% dplyr::filter(cop_year == 2024) %>% NROW(.)`
+    - COP24: `r validations %>% dplyr::filter(cop_year == 2024) %>% NROW(.)`
 - Total downloads: 
     - COP22: `r downloads %>% dplyr::filter(cop_year == 2022) %>% NROW(.)`
     - COP23: `r downloads %>% dplyr::filter(cop_year == 2023) %>% NROW(.)`
-    - COO24: `r downloads %>% dplyr::filter(cop_year == 2024) %>% NROW(.)`
+    - COP24: `r downloads %>% dplyr::filter(cop_year == 2024) %>% NROW(.)`
 - Unique users: `r length(unique(d_events$user))`
 - Logins: `r NROW(logins)`
 - Failed logins: `r dplyr::filter(d_events, event_type == "LOGIN_FAILED") %>% nrow()`
@@ -307,73 +312,3 @@ issue_summary<-d %>%
 kable(issue_summary,caption=paste("Validation summary ( n =",length(unique(d$country_name)),")"))
 
 ```
-
-# ```{r shiny_load_data, eval=FALSE, echo=FALSE}
-# 
-# 
-# days_back <- as.numeric(Sys.getenv("DAYSBACK", 365))
-# 
-# default_content_title <- "Unknown (Deleted Content?)"
-# 
-# report_from <- lubridate::today() - lubridate::ddays(days_back)
-# 
-# client <- connectapi::connect()
-# shiny <- get_usage_shiny(
-#   client,
-#   from = report_from,
-#   limit = Inf
-# ) %>%
-#   mutate(
-#     started = lubridate::ymd_hms(started),
-#     ended = lubridate::ymd_hms(ended),
-#     session_duration = ended - started
-#     ) %>%
-#   filter(session_duration > lubridate::dseconds(5))
-# 
-# content <- get_usage_static(
-#   client,
-#   from = report_from,
-#   limit = Inf
-# )
-# 
-# all_users <- get_users(client, page_size = 500)
-# 
-# data <-   list(shiny = shiny, content = content)
-# ```
-# 
-# 
-# ## Connect server stats
-# ```{r shiny_over_time, eval=TRUE, echo=FALSE}
-# data$shiny %>%
-#     mutate(day = round_date(started, "day")) %>%
-#     group_by(day) %>%
-#     filter(day > today() - ddays(days_back)) %>%
-#     summarise(visits = n()) %>%
-#     arrange(desc(visits)) %>%
-#     {ggplot(., aes(day, visits)) +
-#             geom_bar(stat = "identity") +
-#             labs(
-#                 y = "# of Shiny Sessions",
-#                 x = NULL
-#             )}
-# ```
-# 
-# 
-# ## Datapack sessions by day
-# ```{r datapack_over_time, eval=FALSE, echo=FALSE}
-# data$shiny %>%
-#       mutate(time = ymd_hms(started),
-#           day = round_date(started, "day")) %>%
-#   dplyr::select(content_guid,time,day) %>%
-#   group_by(content_guid,day) %>%
-#   summarize(visits = n()) %>%
-#   arrange(content_guid,desc(visits)) %>%
-#   mutate(name = purrr::map_chr(content_guid, ~ content_title(client, .x, default_content_title))) %>%
-#   dplyr::filter(name == Sys.getenv("APP_NAME")) %>%
-#   {  ggplot(., aes(day, visits)) +
-#      geom_bar(stat = "identity") +
-#      labs(
-#        y = "# of Datapack sessions by day",
-#        x = "Date"
-#      )}
-# ```
