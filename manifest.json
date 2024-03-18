@@ -4,7 +4,7 @@
   "platform": "4.3.2",
   "metadata": {
     "appmode": "rmd-static",
-    "primary_rmd": "app-analytics-cop21.Rmd",
+    "primary_rmd": "app-analytics-cop24.Rmd",
     "primary_html": null,
     "content_category": null,
     "has_parameters": false
