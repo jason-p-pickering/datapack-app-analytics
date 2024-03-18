@@ -1,13 +1,4 @@
----
-title: "Target Setting Tool App Analytics"
-output:
-  pdf_document: default
-html_document:
-  df_print: paged
-lang: "en-US"
-date: '`r format(Sys.time(), "%d %B, %Y %H:%M")`'
----
-  
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -46,7 +37,7 @@ Sys.setenv(LANG = "en_US.UTF-8")
 
 d_events <- dbGetQuery(con,"SELECT event_type,tool,datapack_name,cop_year,
 CAST(date_parse(ts, '%Y-%m-%dT%T+0000') as date) as event_date ,uuid,user
-FROM datapack.cop22_app_events;")
+FROM datapack.cop22_app_events; ")
 
 events_type_map <- tibble::tribble(
   ~event_type, ~message,
@@ -120,8 +111,14 @@ logins <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"LOGIN")) %>
 
 
 
-- Total validations: `r NROW(validations)`
-- Total downloads: `r NROW(downloads)`
+- Total validations: 
+    - COP22: `r validations %>% dplyr::filter(cop_year == 2022) %>% NROW(.)`
+    - COP23: `r validations %>% dplyr::filter(cop_year == 2023) %>% NROW(.)`
+    - COO24: `r validations %>% dplyr::filter(cop_year == 2024) %>% NROW(.)`
+- Total downloads: 
+    - COP22: `r downloads %>% dplyr::filter(cop_year == 2022) %>% NROW(.)`
+    - COP23: `r downloads %>% dplyr::filter(cop_year == 2023) %>% NROW(.)`
+    - COO24: `r downloads %>% dplyr::filter(cop_year == 2024) %>% NROW(.)`
 - Unique users: `r length(unique(d_events$user))`
 - Logins: `r NROW(logins)`
 - Failed logins: `r dplyr::filter(d_events, event_type == "LOGIN_FAILED") %>% nrow()`
@@ -133,7 +130,7 @@ logins <- d_events %>% dplyr::filter(stringr::str_detect(event_type,"LOGIN")) %>
 validations_by_country_total<-
 validations %>% 
   dplyr::select(Country=datapack_name, cop_year) %>%
-  dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+  dplyr::filter(cop_year %in% c(2023,2024)) %>% 
   dplyr::group_by(Country, cop_year ) %>% 
   dplyr::summarise(Validations=dplyr::n(), .groups = "drop") %>% 
   dplyr::arrange(cop_year, Country) %>% 
@@ -151,6 +148,8 @@ knitr::kable(validations_by_country_total) %>%
   row_spec(dim(validations_by_country_total)[1], bold = T) 
 ```
 
+
+
 ## Validations by day
 
 ```{r validations_by_date, eval=TRUE, echo=FALSE, message=FALSE}
@@ -158,12 +157,13 @@ knitr::kable(validations_by_country_total) %>%
 #Validations by date
 validations_by_date_total<-
 validations %>% 
-  dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+  dplyr::filter(cop_year %in% c(2023,2024)) %>% 
   dplyr::select(Date=event_date, cop_year) %>% 
-  dplyr::group_by(Date, cop_year) %>% 
+  dplyr::mutate(Week = lubridate::isoweek(Date)) %>% 
+  dplyr::group_by(Week, cop_year) %>% 
   dplyr::summarise(Validations = dplyr::n())
 
-ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col() + facet_grid(cop_year ~ .) 
+ggplot(validations_by_date_total,aes(x = Week, y= Validations)) + geom_col() + facet_grid(cop_year ~ .) 
 
 
 ```
@@ -176,7 +176,7 @@ ggplot(validations_by_date_total,aes(x = Date, y= Validations)) + geom_col() + f
 #Validations by date
 downloads_by_day_type<-
 downloads %>% 
-  dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+  dplyr::filter(cop_year %in% c(2023,2024)) %>% 
   dplyr::select(Date=event_date,Type = message, Year = cop_year) %>%
   dplyr::mutate(Week = lubridate::isoweek(Date)) %>% 
   dplyr::group_by(Type,Week, Year) %>% 
@@ -187,11 +187,19 @@ ggplot(downloads_by_day_type,aes(x = Week, y= Downloads, fill=Type)) + geom_bar(
 
 ```
 
+## Downloads summary
+
+```{r downloads_summary_table, eval=TRUE, echo=FALSE, message=FALSE}
+downloads_summary_table <- downloads_by_day_type %>% dplyr::group_by(Type,Year) %>% dplyr::summarise(Downloads = sum(Downloads), .groups="drop")  %>% dplyr::mutate(Year = factor(Year))%>% dplyr::arrange(Type, Year) %>%  tidyr::spread(key = Year, value = Downloads, fill = "")
+knitr::kable(downloads_summary_table, align = "lrrr")
+```
+
+
 ### New users
 
 ```{r new_users, eval=TRUE, echo=FALSE, message=FALSE}
 new_users <- d_events %>%
-    dplyr::filter(cop_year %in% datapackr::supportedCOPYears()) %>% 
+    dplyr::filter(cop_year %in% c(2023,2024)) %>% 
   dplyr::select(user,event_date) %>% 
   dplyr::group_by(user) %>%
   dplyr::arrange(event_date) %>%
@@ -212,12 +220,12 @@ new_users <- d_events %>%
 The following table displays the summary of issues of the latest Target Setting Tool which was validated for a specific country or operating unit. Results are then 
 aggregated across all operating units and the resulting percentage of issues which are common to all of the most recent submissions is shown. 
 
-```{r issue_summary, eval=TRUE, echo=FALSE, }
+```{r issue_summary, eval=TRUE, echo=FALSE }
 
 #We need to swtich regions
 Sys.setenv(AWS_REGION = "us-east-2")
 s3<-paws::s3()
-s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="validation_error_summary/cop23/") 
+s3_files <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),Prefix="validation_error_summary/cop24/") 
 files_on_s3<-s3_files$Contents %>% map(.,function(x) x$Key) %>% unlist()
 is_truncated <- s3_files$IsTruncated
 coninutation_token <- s3_files$NextContinuationToken
@@ -225,7 +233,7 @@ coninutation_token <- s3_files$NextContinuationToken
 #Get all of the files
 while(is_truncated) {
   s3_files_next <- s3$list_objects_v2(Bucket=Sys.getenv("AWS_S3_BUCKET"),
-                                      Prefix="validation_error_summary/cop23/",
+                                      Prefix="validation_error_summary/cop24/",
                                       ContinuationToken = coninutation_token,
                                       StartAfter = files_on_s3[length(files_on_s3)])
   is_truncated <- s3_files_next$IsTruncated
@@ -239,7 +247,7 @@ while(is_truncated) {
 
 
 files_df <- stringr::str_split(files_on_s3,"_") %>% do.call("rbind.data.frame",.)
-countries <- files_df[,3] %>% stringr::str_remove("summary/cop23/")
+countries <- files_df[,3] %>% stringr::str_remove("summary/cop24/")
 dates <- files_df[,4]
 times  <- files_df[,5] %>%  stringr::str_remove(".csv")
 
@@ -256,7 +264,7 @@ files_to_get <- files_df %>% group_by(country) %>%
 
 tmpdir<-tempdir()
 dir.create(paste0(tmpdir,"/","validation_error_summary"),)
-dir.create(paste0(tmpdir,"/","validation_error_summary/cop23"))
+dir.create(paste0(tmpdir,"/","validation_error_summary/cop24"))
 
 for ( i in 1:length(files_to_get) ) {
 
@@ -273,7 +281,7 @@ read_plus <- function(flnm) {
     mutate(filename = flnm)
 }
 
-file_prefix<-paste0(tmpdir,"/validation_error_summary/cop23/")
+file_prefix<-paste0(tmpdir,"/validation_error_summary/cop24/")
 
 d <- list.files(path = file_prefix,pattern = "*.csv",full.names = TRUE) %>% 
   map_df(~read_plus(.)) %>% 
@@ -290,82 +298,82 @@ issue_summary<-d %>%
   dplyr::summarise(count=dplyr::n()) %>%
   dplyr::arrange(-count) %>%
   dplyr::mutate(occurrence_rate = ( (100*count/length(files_to_get)) %>% round(.,digits = 1)  ) ) %>%
-  dplyr::select(-count) %>%
   dplyr::rename(Category = validation_issue_category,
+                "Occurences" = count,
                 "Occurrence (%)" = occurrence_rate)
 
 
 
-kable(issue_summary,caption=paste("Validation summary ( n =",length(unique(d$uuid)),")"))
+kable(issue_summary,caption=paste("Validation summary ( n =",length(unique(d$country_name)),")"))
 
 ```
 
-<!-- ```{r shiny_load_data, eval=FALSE, echo=FALSE} -->
-
-
-<!-- days_back <- as.numeric(Sys.getenv("DAYSBACK", 365)) -->
-
-<!-- default_content_title <- "Unknown (Deleted Content?)" -->
-
-<!-- report_from <- lubridate::today() - lubridate::ddays(days_back) -->
-
-<!-- client <- connectapi::connect() -->
-<!-- shiny <- get_usage_shiny( -->
-<!--   client, -->
-<!--   from = report_from, -->
-<!--   limit = Inf -->
-<!-- ) %>% -->
-<!--   mutate( -->
-<!--     started = lubridate::ymd_hms(started), -->
-<!--     ended = lubridate::ymd_hms(ended), -->
-<!--     session_duration = ended - started -->
-<!--     ) %>% -->
-<!--   filter(session_duration > lubridate::dseconds(5)) -->
-
-<!-- content <- get_usage_static( -->
-<!--   client, -->
-<!--   from = report_from, -->
-<!--   limit = Inf -->
-<!-- ) -->
-
-<!-- all_users <- get_users(client, page_size = 500) -->
-
-<!-- data <-   list(shiny = shiny, content = content) -->
-<!-- ``` -->
-
-
-<!-- ## Connect server stats -->
-<!-- ```{r shiny_over_time, eval=TRUE, echo=FALSE} -->
-<!-- data$shiny %>% -->
-<!--     mutate(day = round_date(started, "day")) %>%  -->
-<!--     group_by(day) %>%  -->
-<!--     filter(day > today() - ddays(days_back)) %>%  -->
-<!--     summarise(visits = n()) %>%  -->
-<!--     arrange(desc(visits)) %>%  -->
-<!--     {ggplot(., aes(day, visits)) +  -->
-<!--             geom_bar(stat = "identity") +  -->
-<!--             labs( -->
-<!--                 y = "# of Shiny Sessions", -->
-<!--                 x = NULL -->
-<!--             )} -->
-<!-- ``` -->
-
-
-<!-- ## Datapack sessions by day -->
-<!-- ```{r datapack_over_time, eval=FALSE, echo=FALSE} -->
-<!-- data$shiny %>%  -->
-<!--       mutate(time = ymd_hms(started), -->
-<!--           day = round_date(started, "day")) %>%  -->
-<!--   dplyr::select(content_guid,time,day) %>%  -->
-<!--   group_by(content_guid,day) %>%  -->
-<!--   summarize(visits = n()) %>%  -->
-<!--   arrange(content_guid,desc(visits)) %>%  -->
-<!--   mutate(name = purrr::map_chr(content_guid, ~ content_title(client, .x, default_content_title))) %>%  -->
-<!--   dplyr::filter(name == Sys.getenv("APP_NAME")) %>%  -->
-<!--   {  ggplot(., aes(day, visits)) +  -->
-<!--      geom_bar(stat = "identity") +   -->
-<!--      labs( -->
-<!--        y = "# of Datapack sessions by day", -->
-<!--        x = "Date" -->
-<!--      )}  -->
-<!-- ``` -->
+# ```{r shiny_load_data, eval=FALSE, echo=FALSE}
+# 
+# 
+# days_back <- as.numeric(Sys.getenv("DAYSBACK", 365))
+# 
+# default_content_title <- "Unknown (Deleted Content?)"
+# 
+# report_from <- lubridate::today() - lubridate::ddays(days_back)
+# 
+# client <- connectapi::connect()
+# shiny <- get_usage_shiny(
+#   client,
+#   from = report_from,
+#   limit = Inf
+# ) %>%
+#   mutate(
+#     started = lubridate::ymd_hms(started),
+#     ended = lubridate::ymd_hms(ended),
+#     session_duration = ended - started
+#     ) %>%
+#   filter(session_duration > lubridate::dseconds(5))
+# 
+# content <- get_usage_static(
+#   client,
+#   from = report_from,
+#   limit = Inf
+# )
+# 
+# all_users <- get_users(client, page_size = 500)
+# 
+# data <-   list(shiny = shiny, content = content)
+# ```
+# 
+# 
+# ## Connect server stats
+# ```{r shiny_over_time, eval=TRUE, echo=FALSE}
+# data$shiny %>%
+#     mutate(day = round_date(started, "day")) %>%
+#     group_by(day) %>%
+#     filter(day > today() - ddays(days_back)) %>%
+#     summarise(visits = n()) %>%
+#     arrange(desc(visits)) %>%
+#     {ggplot(., aes(day, visits)) +
+#             geom_bar(stat = "identity") +
+#             labs(
+#                 y = "# of Shiny Sessions",
+#                 x = NULL
+#             )}
+# ```
+# 
+# 
+# ## Datapack sessions by day
+# ```{r datapack_over_time, eval=FALSE, echo=FALSE}
+# data$shiny %>%
+#       mutate(time = ymd_hms(started),
+#           day = round_date(started, "day")) %>%
+#   dplyr::select(content_guid,time,day) %>%
+#   group_by(content_guid,day) %>%
+#   summarize(visits = n()) %>%
+#   arrange(content_guid,desc(visits)) %>%
+#   mutate(name = purrr::map_chr(content_guid, ~ content_title(client, .x, default_content_title))) %>%
+#   dplyr::filter(name == Sys.getenv("APP_NAME")) %>%
+#   {  ggplot(., aes(day, visits)) +
+#      geom_bar(stat = "identity") +
+#      labs(
+#        y = "# of Datapack sessions by day",
+#        x = "Date"
+#      )}
+# ```
